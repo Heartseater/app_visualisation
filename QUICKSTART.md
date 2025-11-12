@@ -22,6 +22,13 @@ npm start
 
 The backend will start on `http://localhost:3001`. Keep this terminal running.
 
+If you plan to use the Open-Meteo combined endpoint (`/api/external/open-meteo`), make sure the backend dependencies are installed. The `openmeteo` client is already listed in `backend/package.json`; running `npm install` in the `backend/` folder will install it. Alternatively you can explicitly run:
+
+```bash
+# from the repo root
+cd backend && npm install openmeteo || npm install open-meteo
+```
+
 ### 2. Start the Web App
 
 Open a new terminal:
