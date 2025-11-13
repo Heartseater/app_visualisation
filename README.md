@@ -1,4 +1,4 @@
-# Smart Window Control System
+# Smart Window Control System (en cours)
 
 A full-stack application for visualizing and controlling a smart window system based on real-time weather conditions. The system includes a React web app, React Native mobile app, and Node.js backend API.
 
