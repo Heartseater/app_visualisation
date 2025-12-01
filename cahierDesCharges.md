@@ -106,12 +106,5 @@ Notre projet consiste à réaliser un dispositif IoT permettant d'ouvrir ou ferm
 
 ---
 
-## 9. Ressources & budget
-
-- Équipe : 1 intégrateur hardware, 1 développeur firmware, 1 développeur backend, 1 développeur mobile/UX.
-- Matériel : liste et coût estimés (MCU, capteurs, moteur, alimentations, boîtier).
-
----
-
-## 10. Remarques / Notes
+## 9. Remarques / Notes
 
