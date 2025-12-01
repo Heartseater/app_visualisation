@@ -11,7 +11,7 @@
 
 ## 1. Résumé du projet
 
-"Dispositif IoT permettant d'ouvrir/fermer automatiquement un volet roulant selon les conditions météo (pluie, vent, ensoleillement, pollution) et offrant une application de monitoring et de contrôle manuel pour l'utilisateur."
+Notre projet consiste à réaliser un dispositif IoT permettant d'ouvrir ou fermer automatiquement un volet roulant selon les conditions météo (pluie, vent, ensoleillement, pollution) et offrant une application de monitoring et de contrôle manuel pour l'utilisateur.
 
 ---
 
@@ -20,7 +20,7 @@
 - **Contexte** : maison connectée, gain d'énergie, protection contre intempéries
 - **Objectifs principaux** :
 	- Protéger l'habitation en fermant le volet par mauvais temps.
-	- Optimiser l'exposition solaire en ouvrant/fermant selon luminosité/ensoleillement.
+	- Optimiser l'exposition solaire en ouvrant/fermant selon la luminosité ou l'ensoleillement.
 	- Fournir un contrôle manuel et des notifications via une application.
 
 ---
@@ -29,7 +29,7 @@
 
 - **Matériel** :
   - moteur
-  - carte ESP32/Arduino
+  - carte ESP32
 - **Logiciel**: 
     - Firmware embarqué pour actionneur
     - Application mobile/web pour monitoring et contrôle
@@ -45,7 +45,7 @@
 
 ---
 
-## 5. Exigences fonctionnelles (à remplir / adapter)
+## 5. Exigences fonctionnelles 
 
 - **01 — Récupération des conditions locales**
 	- Description : Le système doit pouvoir récupérer la luminosité, la température et la détection pluie/vent via api.
@@ -53,7 +53,7 @@
 	- Critères d'acceptation : Données météo reçues toutes les 10 minutes; logs des valeurs stockés localement et/ou sur cloud.
 
 - **02 — Règles d'ouverture/fermeture automatique**
-	- Description : Le volet s'ouvre/ferme automatiquement selon des règles configurables (ex : fermer si pluie détectée ou vent > seuil).
+	- Description : Le volet s'ouvre ou se ferme automatiquement selon des règles configurables (ex : fermer si pluie détectée ou vent > seuil).
 	- Priorité : Haute
 	- Critères d'acceptation : Scénarios de test montrant que la règle est appliquée correctement; possibilité de forcer manuellement.
 
@@ -84,30 +84,21 @@
 
 ---
 
-## 6. Contraintes techniques
-
-- Langages / plateformes : MCU (C/C++/Arduino/ESP-IDF), Backend (Node.js / Python), App (React Native / Expo / web React).
-- Protocoles : MQTT ou HTTP(S) pour télémetrie, REST API pour l'app.
-- Capteurs recommandés : anémomètre (vent), capteur pluie (ou pluviomètre), capteur luminosité (LDR ou lux), capteur de position/fine (endstops ou encodeur), senseur de courant pour détection d'effort moteur.
-- Sécurité matérielle : fusible, butées mécaniques, détecteur de surchauffe moteur.
-
----
-
-## 7. UI / UX
+## 6. UI / UX
 
 - Écrans essentiels : écran principal (état du volet), écran historique, écran réglages règles météo, écran notifications.
 - Flux : connexion -> page d'accueil -> contrôle rapide -> paramètres -> logs.
 
 ---
 
-## 8. Cas d'utilisation
+## 7. Cas d'utilisation
 
 - En tant qu'utilisateur, je veux que le volet se ferme automatiquement quand les conditions météorologiques ne sont pas favorables.
 - En tant qu'utilisateur, je veux ouvrir manuellement le volet depuis l'app.
 
 ---
 
-## 9. Tests & Critères d'acceptation
+## 8. Tests & Critères d'acceptation
 
 - Tests unitaires : firmware logique, backend endpoints.
 - Tests d'intégration : envoi de télémétrie + réaction automatique.
@@ -115,12 +106,12 @@
 
 ---
 
-## 10. Ressources & budget
+## 9. Ressources & budget
 
 - Équipe : 1 intégrateur hardware, 1 développeur firmware, 1 développeur backend, 1 développeur mobile/UX.
 - Matériel : liste et coût estimés (MCU, capteurs, moteur, alimentations, boîtier).
 
 ---
 
-## 11. Remarques / Notes
+## 10. Remarques / Notes
 
