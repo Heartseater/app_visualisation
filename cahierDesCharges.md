@@ -5,7 +5,7 @@
 
 **Date** : [01/12/2025]
 
-**Auteurs** : [Vincent Canaguy, Yahya Er-Rahmaouy, Tayeb Nazim Djeradi]
+**Auteurs** : [Vincent Canaguy, Yahya Er-Rahmaouy, Tayeb Nazim Djeradi, Aladji Kassoum BINI]
 
 ---
 
