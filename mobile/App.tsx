@@ -1,8 +1,3 @@
-/**
- * Smart Window Control System - Mobile App
- * Permet de configurer l'ESP32 via Bluetooth et de voir l'état via le Backend.
- */
-
 import React, { useState, useEffect } from 'react';
 import {
   SafeAreaView,
@@ -17,24 +12,22 @@ import {
   PermissionsAndroid,
   Platform,
   ActivityIndicator,
-  RefreshControl
+  Switch
 } from 'react-native';
-import { BleManager, Device } from 'react-native-ble-plx';
+import { BleManager } from 'react-native-ble-plx';
 import { encode } from 'base-64';
 
 const API_URL = 'http://10.55.71.14:3001'; 
 
-// UUIDs (Doivent correspondre exactement au code C++ de l'ESP32)
 const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
 const CHAR_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 
 const bleManager = new BleManager();
 
 function App(): React.JSX.Element {
-  // --- Navigation simple (Onglets) ---
   const [tab, setTab] = useState<'SETUP' | 'DASHBOARD'>('SETUP');
   
-  // --- State pour le SETUP (Bluetooth) ---
+  // Setup BLE
   const [ssid, setSsid] = useState('');
   const [password, setPassword] = useState('');
   const [lat, setLat] = useState('45.188');
@@ -42,11 +35,10 @@ function App(): React.JSX.Element {
   const [bleStatus, setBleStatus] = useState('En attente...');
   const [scanning, setScanning] = useState(false);
 
-  // --- State pour le DASHBOARD (HTTP) ---
+  // Dashboard Data
   const [windowState, setWindowState] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  // 1. Demander les permissions Android au lancement
   const requestPermissions = async () => {
     if (Platform.OS === 'android') {
       await PermissionsAndroid.requestMultiple([
@@ -59,7 +51,7 @@ function App(): React.JSX.Element {
 
   useEffect(() => { requestPermissions(); }, []);
 
-  // 2. Fonction pour Scanner, Connecter et Configurer l'ESP32
+  // --- LOGIQUE BLE (Configuration) ---
   const scanAndConfigure = () => {
     if (scanning) return;
     setScanning(true);
@@ -74,196 +66,145 @@ function App(): React.JSX.Element {
 
       if (device && (device.name === 'ESP32_SmartWindow' || device.localName === 'ESP32_SmartWindow')) {
         bleManager.stopDeviceScan();
-        setBleStatus('Connexion en cours...');
+        setBleStatus('Connexion...');
         
         device.connect()
-          .then((d) => {
-            setBleStatus('Services...');
-            return d.discoverAllServicesAndCharacteristics();
-          })
+          .then((d) => d.discoverAllServicesAndCharacteristics())
           .then((d) => {
             setBleStatus('Envoi Config...');
             const configStr = `${ssid};${password};${lat};${lon}`;
-            const base64Data = encode(configStr);
-            
-            // On envoie l'écriture
-            return d.writeCharacteristicWithResponseForService(SERVICE_UUID, CHAR_UUID, base64Data);
+            return d.writeCharacteristicWithResponseForService(SERVICE_UUID, CHAR_UUID, encode(configStr));
           })
-          .then(() => {
-            // CAS IDÉAL : Tout s'est bien passé
-            handleSuccess();
-          })
-          .catch((e) => {
-            // CAS FRÉQUENT : L'ESP32 redémarre si vite que l'app croit à une erreur
-            console.log("Erreur ou Redémarrage :", e);
-            
-            // Si l'erreur contient "déconnecté" ou une erreur d'écriture générique,
-            // c'est souvent que l'ESP32 a déjà rebooté. On force le succès.
-            handleSuccess();
-          });
+          .then(() => handleSuccess())
+          .catch(() => handleSuccess()); // On force le succès même si l'ESP reboot
       }
     });
 
-    // Fonction pour gérer le succès et la navigation
     const handleSuccess = () => {
         setBleStatus('Config envoyée ! ✅');
         setScanning(false);
-        Alert.alert("Succès", "L'ESP32 a reçu la config et redémarre.");
-        // On force le passage au Dashboard
-        setTimeout(() => {
-            setTab('DASHBOARD');
-            fetchStatus(); // On lance une récup des données tout de suite
-        }, 1000);
+        Alert.alert("Succès", "L'ESP32 redémarre...");
+        setTimeout(() => { setTab('DASHBOARD'); fetchStatus(); }, 1000);
     };
 
-    // Timeout de sécurité
-    setTimeout(() => {
-        if(scanning) {
-            bleManager.stopDeviceScan();
-            setScanning(false);
-            setBleStatus('Timeout: Rapprochez-vous de la carte.');
-        }
-    }, 15000);
+    setTimeout(() => { if(scanning) { bleManager.stopDeviceScan(); setScanning(false); setBleStatus('Timeout'); } }, 15000);
   };
 
-  // 3. Fonction pour récupérer l'état de la fenêtre depuis le Backend
+  // --- LOGIQUE DASHBOARD (API HTTP) ---
   const fetchStatus = async () => {
     setRefreshing(true);
     try {
-        console.log(`Appel API vers: ${API_URL}/api/window/status`);
         const res = await fetch(`${API_URL}/api/window/status`);
         const data = await res.json();
         setWindowState(data);
     } catch (e) {
-        console.log("Erreur API:", e);
-        Alert.alert("Erreur Serveur", "Impossible de joindre le backend. Vérifiez l'IP dans App.tsx et que 'npm start' tourne.");
+        console.log("Erreur API", e);
     } finally {
         setRefreshing(false);
     }
   };
 
-  // Charger le statut quand on arrive sur l'onglet Dashboard
-  useEffect(() => {
-      if (tab === 'DASHBOARD') {
-          fetchStatus();
-      }
-  }, [tab]);
+  const sendCommand = async (action: 'open' | 'close') => {
+      try {
+          await fetch(`${API_URL}/api/window/control`, {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({ action, autoMode: false })
+          });
+          fetchStatus(); // Mise à jour immédiate
+      } catch (e) { Alert.alert("Erreur", "Impossible d'envoyer la commande"); }
+  };
 
-  // --- INTERFACE GRAPHIQUE ---
+  const toggleAutoMode = async (value: boolean) => {
+      try {
+          await fetch(`${API_URL}/api/window/control`, {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({ autoMode: value })
+          });
+          fetchStatus();
+      } catch (e) { Alert.alert("Erreur", "Erreur réseau"); }
+  };
+
+  useEffect(() => { if (tab === 'DASHBOARD') fetchStatus(); }, [tab]);
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#667eea" />
-      
-      {/* HEADER */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>🪟 Smart Window</Text>
         <View style={styles.tabs}>
-            <TouchableOpacity onPress={() => setTab('SETUP')} style={[styles.tab, tab==='SETUP' && styles.activeTab]}>
-                <Text style={styles.tabText}>📡 1. Configuration</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => setTab('DASHBOARD')} style={[styles.tab, tab==='DASHBOARD' && styles.activeTab]}>
-                <Text style={styles.tabText}>📊 2. Dashboard</Text>
-            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setTab('SETUP')} style={[styles.tab, tab==='SETUP' && styles.activeTab]}><Text style={styles.tabText}>📡 Setup</Text></TouchableOpacity>
+            <TouchableOpacity onPress={() => setTab('DASHBOARD')} style={[styles.tab, tab==='DASHBOARD' && styles.activeTab]}><Text style={styles.tabText}>📊 Contrôle</Text></TouchableOpacity>
         </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
-        
-        {/* --- ONGLET 1 : CONFIGURATION (BLE) --- */}
         {tab === 'SETUP' && (
             <View style={styles.card}>
-                <Text style={styles.sectionTitle}>Configuration WiFi & Localisation</Text>
-                <Text style={styles.subText}>Renseignez vos identifiants WiFi pour que l'ESP32 puisse se connecter à Internet.</Text>
-                
-                <Text style={styles.label}>Nom du WiFi (SSID)</Text>
-                <TextInput 
-                    style={styles.input} 
-                    value={ssid} 
-                    onChangeText={setSsid} 
-                    placeholder="Ex: Livebox-1234"
-                    autoCapitalize="none"
-                />
-                
-                <Text style={styles.label}>Mot de passe WiFi</Text>
-                <TextInput 
-                    style={styles.input} 
-                    value={password} 
-                    onChangeText={setPassword} 
-                    secureTextEntry 
-                    placeholder="******"
-                />
-
+                <Text style={styles.sectionTitle}>Configuration WiFi</Text>
+                <TextInput style={styles.input} value={ssid} onChangeText={setSsid} placeholder="SSID WiFi" autoCapitalize='none'/>
+                <TextInput style={styles.input} value={password} onChangeText={setPassword} secureTextEntry placeholder="Mot de passe"/>
                 <View style={{flexDirection:'row', gap:10}}>
-                    <View style={{flex:1}}>
-                        <Text style={styles.label}>Latitude</Text>
-                        <TextInput style={styles.input} value={lat} onChangeText={setLat} keyboardType="numeric"/>
-                    </View>
-                    <View style={{flex:1}}>
-                        <Text style={styles.label}>Longitude</Text>
-                        <TextInput style={styles.input} value={lon} onChangeText={setLon} keyboardType="numeric"/>
-                    </View>
+                    <TextInput style={[styles.input, {flex:1}]} value={lat} onChangeText={setLat} placeholder="Lat" keyboardType='numeric'/>
+                    <TextInput style={[styles.input, {flex:1}]} value={lon} onChangeText={setLon} placeholder="Lon" keyboardType='numeric'/>
                 </View>
-
-                <View style={styles.statusBox}>
-                    <Text style={{fontWeight:'bold', color: '#333'}}>État : {bleStatus}</Text>
-                    {scanning && <ActivityIndicator color="#667eea" />}
-                </View>
-
-                <TouchableOpacity 
-                    style={[styles.btnAction, scanning && {opacity: 0.7}]} 
-                    onPress={scanAndConfigure}
-                    disabled={scanning}
-                >
-                    <Text style={styles.btnText}>{scanning ? 'Recherche en cours...' : '📲 ENVOYER A L\'ESP32'}</Text>
+                <Text style={{marginBottom:10, textAlign:'center'}}>{bleStatus}</Text>
+                <TouchableOpacity style={styles.btnAction} onPress={scanAndConfigure} disabled={scanning}>
+                    <Text style={styles.btnText}>{scanning ? '...' : 'ENVOYER CONFIG'}</Text>
                 </TouchableOpacity>
             </View>
         )}
 
-        {/* --- ONGLET 2 : DASHBOARD (HTTP) --- */}
         {tab === 'DASHBOARD' && (
             <View>
                 <View style={[styles.card, {alignItems:'center'}]}>
-                    <Text style={styles.sectionTitle}>État actuel</Text>
-                    
-                    {/* Icône Géante */}
-                    <Text style={{fontSize: 80, marginVertical: 20}}>
-                        {windowState?.isOpen ? '🪟' : '🚪'}
-                    </Text>
-                    
-                    {/* Texte État */}
+                    <Text style={{fontSize: 80}}>{windowState?.isOpen ? '🪟' : '🚪'}</Text>
                     <Text style={[styles.statusText, {color: windowState?.isOpen ? 'green' : '#d63031'}]}>
                         {windowState?.isOpen ? 'OUVERTE' : 'FERMÉE'}
                     </Text>
 
-                    {/* Données Météo reçues du Backend */}
+                    {/* Données Météo */}
                     <View style={styles.infoRow}>
-                        <View style={styles.infoItem}>
-                            <Text style={styles.infoLabel}>🌡️ Temp</Text>
-                            <Text style={styles.infoValue}>{windowState?.temp ? windowState.temp + '°C' : '--'}</Text>
+                        <Text style={styles.infoValue}>🌡️ {windowState?.temp}°C</Text>
+                        <Text style={styles.infoValue}>🏭 AQI {windowState?.aqi}</Text>
+                    </View>
+
+                    {/* --- NOUVEAU : CONTRÔLES --- */}
+                    <View style={styles.controlPanel}>
+                        <View style={styles.switchRow}>
+                            <Text style={styles.label}>Mode Automatique</Text>
+                            <Switch 
+                                value={windowState?.autoMode ?? true} 
+                                onValueChange={toggleAutoMode}
+                                trackColor={{false: "#767577", true: "#81b0ff"}}
+                                thumbColor={windowState?.autoMode ? "#667eea" : "#f4f3f4"}
+                            />
                         </View>
-                        <View style={styles.infoItem}>
-                            <Text style={styles.infoLabel}>🏭 Pollution</Text>
-                            <Text style={styles.infoValue}>{windowState?.aqi ? 'AQI ' + windowState.aqi : '--'}</Text>
-                        </View>
+
+                        {/* Les boutons ne s'affichent que si le mode Auto est OFF */}
+                        {!windowState?.autoMode && (
+                            <View style={styles.btnRow}>
+                                <TouchableOpacity style={[styles.btnCmd, {backgroundColor: '#27ae60'}]} onPress={() => sendCommand('open')}>
+                                    <Text style={styles.btnText}>OUVRIR</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity style={[styles.btnCmd, {backgroundColor: '#c0392b'}]} onPress={() => sendCommand('close')}>
+                                    <Text style={styles.btnText}>FERMER</Text>
+                                </TouchableOpacity>
+                            </View>
+                        )}
+                        
+                        {windowState?.autoMode && (
+                            <Text style={{fontStyle:'italic', color:'#888', marginTop:10}}>Désactivez le mode auto pour contrôler.</Text>
+                        )}
                     </View>
 
                     <TouchableOpacity style={styles.btnRefresh} onPress={fetchStatus}>
                         <Text style={styles.btnText}>Actualiser</Text>
                     </TouchableOpacity>
                 </View>
-
-                <View style={styles.card}>
-                    <Text style={styles.sectionTitle}>Dernière synchronisation</Text>
-                    <Text style={{color:'#555'}}>
-                        {windowState?.lastUpdated ? new Date(windowState.lastUpdated).toLocaleTimeString() : 'Jamais'}
-                    </Text>
-                    <Text style={{color:'#888', marginTop:10, fontStyle:'italic', fontSize: 12}}>
-                        Le système se met à jour automatiquement toutes les 30 secondes via l'ESP32.
-                    </Text>
-                </View>
             </View>
         )}
-
       </ScrollView>
     </SafeAreaView>
   );
@@ -271,27 +212,29 @@ function App(): React.JSX.Element {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f2f5' },
-  header: { backgroundColor: '#667eea', paddingTop: 20, paddingBottom: 0, alignItems: 'center', elevation: 4 },
+  header: { backgroundColor: '#667eea', paddingTop: 20, alignItems: 'center' },
   headerTitle: { color: 'white', fontSize: 22, fontWeight: 'bold', marginBottom: 15 },
   tabs: { flexDirection: 'row', width: '100%' },
   tab: { flex: 1, padding: 15, alignItems: 'center', borderBottomWidth: 4, borderBottomColor: 'transparent' },
   activeTab: { borderBottomColor: 'white' },
-  tabText: { color: 'white', fontWeight: 'bold', fontSize: 14 },
+  tabText: { color: 'white', fontWeight: 'bold' },
   content: { padding: 20 },
-  card: { backgroundColor: 'white', padding: 20, borderRadius: 12, marginBottom: 20, elevation: 2, shadowColor: '#000', shadowOffset:{width:0, height:2}, shadowOpacity:0.1, shadowRadius:4 },
+  card: { backgroundColor: 'white', padding: 20, borderRadius: 12, marginBottom: 20, elevation: 2 },
   sectionTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 10, color: '#333' },
-  subText: { color: '#666', marginBottom: 20, fontSize: 13 },
-  label: { fontWeight: '600', marginBottom: 5, color: '#444' },
-  input: { borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 12, marginBottom: 15, fontSize: 16, backgroundColor: '#fafafa', color: '#333' },
-  statusBox: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, padding: 12, backgroundColor: '#eef', borderRadius: 8, borderWidth: 1, borderColor: '#dde' },
+  input: { borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 12, marginBottom: 15, fontSize: 16, backgroundColor: '#fafafa', color:'black' },
   btnAction: { backgroundColor: '#667eea', padding: 15, borderRadius: 8, alignItems: 'center' },
   btnRefresh: { backgroundColor: '#333', padding: 12, borderRadius: 8, alignItems: 'center', marginTop: 20, width:'100%' },
-  btnText: { color: 'white', fontWeight: 'bold', fontSize: 16 },
+  btnText: { color: 'white', fontWeight: 'bold' },
   statusText: { fontSize: 28, fontWeight: 'bold', marginBottom: 20 },
-  infoRow: { flexDirection: 'row', width: '100%', justifyContent: 'space-around', marginVertical: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#eee' },
-  infoItem: { alignItems: 'center' },
-  infoLabel: { fontSize: 14, color: '#666', marginBottom: 4 },
-  infoValue: { fontSize: 18, fontWeight: 'bold', color: '#333' }
+  infoRow: { flexDirection: 'row', gap: 20, marginBottom: 20 },
+  infoValue: { fontSize: 18, fontWeight: 'bold', color: '#555' },
+  
+  // Nouveaux Styles pour le panneau de contrôle
+  controlPanel: { width: '100%', padding: 15, backgroundColor: '#f8f9fa', borderRadius: 10, alignItems: 'center' },
+  switchRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', alignItems: 'center', marginBottom: 15 },
+  label: { fontSize: 16, fontWeight: '600', color: '#333' },
+  btnRow: { flexDirection: 'row', gap: 10, width: '100%' },
+  btnCmd: { flex: 1, padding: 15, borderRadius: 8, alignItems: 'center' }
 });
 
 export default App;
