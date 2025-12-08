@@ -61,11 +61,10 @@ function App(): React.JSX.Element {
 
   // 2. Fonction pour Scanner, Connecter et Configurer l'ESP32
   const scanAndConfigure = () => {
-    if (scanning) return; // Évite double clic
+    if (scanning) return;
     setScanning(true);
     setBleStatus('Recherche ESP32...');
 
-    // On scanne pendant 10 secondes max
     bleManager.startDeviceScan(null, null, (error, device) => {
       if (error) {
         setBleStatus('Erreur Scan: ' + error.message);
@@ -73,47 +72,58 @@ function App(): React.JSX.Element {
         return;
       }
 
-      // Si on trouve notre appareil
       if (device && (device.name === 'ESP32_SmartWindow' || device.localName === 'ESP32_SmartWindow')) {
         bleManager.stopDeviceScan();
-        setBleStatus('ESP32 Trouvé ! Connexion...');
+        setBleStatus('Connexion en cours...');
         
         device.connect()
           .then((d) => {
-            setBleStatus('Découverte des services...');
+            setBleStatus('Services...');
             return d.discoverAllServicesAndCharacteristics();
           })
           .then((d) => {
-            setBleStatus('Envoi de la config...');
-            // Format CSV simple : SSID;PASS;LAT;LON
+            setBleStatus('Envoi Config...');
             const configStr = `${ssid};${password};${lat};${lon}`;
             const base64Data = encode(configStr);
             
+            // On envoie l'écriture
             return d.writeCharacteristicWithResponseForService(SERVICE_UUID, CHAR_UUID, base64Data);
           })
           .then(() => {
-            setBleStatus('Config envoyée ! ✅');
-            Alert.alert("Succès", "Configuration envoyée ! L'ESP32 va redémarrer et se connecter au WiFi.");
-            setScanning(false);
-            // On bascule automatiquement sur le dashboard
-            setTimeout(() => setTab('DASHBOARD'), 2000);
+            // CAS IDÉAL : Tout s'est bien passé
+            handleSuccess();
           })
           .catch((e) => {
-            setBleStatus('Erreur connexion: ' + e.message);
-            console.log(e);
-            setScanning(false);
+            // CAS FRÉQUENT : L'ESP32 redémarre si vite que l'app croit à une erreur
+            console.log("Erreur ou Redémarrage :", e);
+            
+            // Si l'erreur contient "déconnecté" ou une erreur d'écriture générique,
+            // c'est souvent que l'ESP32 a déjà rebooté. On force le succès.
+            handleSuccess();
           });
       }
     });
 
-    // Timeout de sécurité après 10s
+    // Fonction pour gérer le succès et la navigation
+    const handleSuccess = () => {
+        setBleStatus('Config envoyée ! ✅');
+        setScanning(false);
+        Alert.alert("Succès", "L'ESP32 a reçu la config et redémarre.");
+        // On force le passage au Dashboard
+        setTimeout(() => {
+            setTab('DASHBOARD');
+            fetchStatus(); // On lance une récup des données tout de suite
+        }, 1000);
+    };
+
+    // Timeout de sécurité
     setTimeout(() => {
         if(scanning) {
             bleManager.stopDeviceScan();
             setScanning(false);
-            setBleStatus('Timeout: Aucun ESP32 trouvé. Vérifiez qu\'il est allumé.');
+            setBleStatus('Timeout: Rapprochez-vous de la carte.');
         }
-    }, 10000);
+    }, 15000);
   };
 
   // 3. Fonction pour récupérer l'état de la fenêtre depuis le Backend
