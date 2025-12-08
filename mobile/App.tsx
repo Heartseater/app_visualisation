@@ -1,11 +1,9 @@
 /**
  * Smart Window Control System - Mobile App
- * React Native application for controlling windows based on weather conditions
- *
- * @format
+ * Permet de configurer l'ESP32 via Bluetooth et de voir l'état via le Backend.
  */
 
-import React, {useState, useEffect} from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   SafeAreaView,
   ScrollView,
@@ -14,536 +12,276 @@ import {
   Text,
   View,
   TouchableOpacity,
-  RefreshControl,
-  Switch,
+  TextInput,
+  Alert,
+  PermissionsAndroid,
+  Platform,
   ActivityIndicator,
+  RefreshControl
 } from 'react-native';
+import { BleManager, Device } from 'react-native-ble-plx';
+import { encode } from 'base-64';
 
-interface WeatherData {
-  pollution: {
-    value: number;
-    unit: string;
-    status: string;
-  };
-  sunlight: {
-    value: number;
-    unit: string;
-    intensity: string;
-  };
-  windSpeed: {
-    value: number;
-    unit: string;
-    status: string;
-  };
-  temperature: {
-    value: number;
-    unit: string;
-  };
-  timestamp: string;
-}
+const API_URL = 'http://10.55.71.14:3001'; 
 
-interface WindowState {
-  isOpen: boolean;
-  lastUpdated: string;
-  autoMode: boolean;
-}
+// UUIDs (Doivent correspondre exactement au code C++ de l'ESP32)
+const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+const CHAR_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 
-// API base URL configured via src/config.ts (handles emulator vs device)
-import {API_URL} from './src/config';
+const bleManager = new BleManager();
 
 function App(): React.JSX.Element {
-  const [weatherData, setWeatherData] = useState<WeatherData | null>(null);
-  const [windowState, setWindowState] = useState<WindowState | null>(null);
-  const [loading, setLoading] = useState(true);
+  // --- Navigation simple (Onglets) ---
+  const [tab, setTab] = useState<'SETUP' | 'DASHBOARD'>('SETUP');
+  
+  // --- State pour le SETUP (Bluetooth) ---
+  const [ssid, setSsid] = useState('');
+  const [password, setPassword] = useState('');
+  const [lat, setLat] = useState('45.188');
+  const [lon, setLon] = useState('5.724');
+  const [bleStatus, setBleStatus] = useState('En attente...');
+  const [scanning, setScanning] = useState(false);
+
+  // --- State pour le DASHBOARD (HTTP) ---
+  const [windowState, setWindowState] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  const fetchWeatherData = async () => {
-    try {
-      const response = await fetch(`${API_URL}/api/weather`);
-      if (!response.ok) throw new Error('Failed to fetch weather data');
-      const data = await response.json();
-      setWeatherData(data);
-      setError(null);
-    } catch (err) {
-      setError('Failed to fetch weather data. Make sure the backend is running.');
-      console.error(err);
+  // 1. Demander les permissions Android au lancement
+  const requestPermissions = async () => {
+    if (Platform.OS === 'android') {
+      await PermissionsAndroid.requestMultiple([
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+      ]);
     }
   };
 
-  const fetchWindowStatus = async () => {
-    try {
-      const response = await fetch(`${API_URL}/api/window/status`);
-      if (!response.ok) throw new Error('Failed to fetch window status');
-      const data = await response.json();
-      setWindowState(data);
-      setError(null);
-    } catch (err) {
-      setError('Failed to fetch window status.');
-      console.error(err);
-    }
+  useEffect(() => { requestPermissions(); }, []);
+
+  // 2. Fonction pour Scanner, Connecter et Configurer l'ESP32
+  const scanAndConfigure = () => {
+    if (scanning) return; // Évite double clic
+    setScanning(true);
+    setBleStatus('Recherche ESP32...');
+
+    // On scanne pendant 10 secondes max
+    bleManager.startDeviceScan(null, null, (error, device) => {
+      if (error) {
+        setBleStatus('Erreur Scan: ' + error.message);
+        setScanning(false);
+        return;
+      }
+
+      // Si on trouve notre appareil
+      if (device && (device.name === 'ESP32_SmartWindow' || device.localName === 'ESP32_SmartWindow')) {
+        bleManager.stopDeviceScan();
+        setBleStatus('ESP32 Trouvé ! Connexion...');
+        
+        device.connect()
+          .then((d) => {
+            setBleStatus('Découverte des services...');
+            return d.discoverAllServicesAndCharacteristics();
+          })
+          .then((d) => {
+            setBleStatus('Envoi de la config...');
+            // Format CSV simple : SSID;PASS;LAT;LON
+            const configStr = `${ssid};${password};${lat};${lon}`;
+            const base64Data = encode(configStr);
+            
+            return d.writeCharacteristicWithResponseForService(SERVICE_UUID, CHAR_UUID, base64Data);
+          })
+          .then(() => {
+            setBleStatus('Config envoyée ! ✅');
+            Alert.alert("Succès", "Configuration envoyée ! L'ESP32 va redémarrer et se connecter au WiFi.");
+            setScanning(false);
+            // On bascule automatiquement sur le dashboard
+            setTimeout(() => setTab('DASHBOARD'), 2000);
+          })
+          .catch((e) => {
+            setBleStatus('Erreur connexion: ' + e.message);
+            console.log(e);
+            setScanning(false);
+          });
+      }
+    });
+
+    // Timeout de sécurité après 10s
+    setTimeout(() => {
+        if(scanning) {
+            bleManager.stopDeviceScan();
+            setScanning(false);
+            setBleStatus('Timeout: Aucun ESP32 trouvé. Vérifiez qu\'il est allumé.');
+        }
+    }, 10000);
   };
 
-  const controlWindow = async (action: 'open' | 'close') => {
-    try {
-      const response = await fetch(`${API_URL}/api/window/control`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({action}),
-      });
-      if (!response.ok) throw new Error('Failed to control window');
-      const data = await response.json();
-      setWindowState(data.state);
-      setError(null);
-    } catch (err) {
-      setError('Failed to control window');
-      console.error(err);
-    }
-  };
-
-  const toggleAutoMode = async () => {
-    if (!windowState) return;
-    try {
-      const response = await fetch(`${API_URL}/api/window/control`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({autoMode: !windowState.autoMode}),
-      });
-      if (!response.ok) throw new Error('Failed to toggle auto mode');
-      const data = await response.json();
-      setWindowState(data.state);
-      setError(null);
-    } catch (err) {
-      setError('Failed to toggle auto mode');
-      console.error(err);
-    }
-  };
-
-  const fetchData = async () => {
-    await Promise.all([fetchWeatherData(), fetchWindowStatus()]);
-  };
-
-  const onRefresh = async () => {
+  // 3. Fonction pour récupérer l'état de la fenêtre depuis le Backend
+  const fetchStatus = async () => {
     setRefreshing(true);
-    await fetchData();
-    setRefreshing(false);
+    try {
+        console.log(`Appel API vers: ${API_URL}/api/window/status`);
+        const res = await fetch(`${API_URL}/api/window/status`);
+        const data = await res.json();
+        setWindowState(data);
+    } catch (e) {
+        console.log("Erreur API:", e);
+        Alert.alert("Erreur Serveur", "Impossible de joindre le backend. Vérifiez l'IP dans App.tsx et que 'npm start' tourne.");
+    } finally {
+        setRefreshing(false);
+    }
   };
 
+  // Charger le statut quand on arrive sur l'onglet Dashboard
   useEffect(() => {
-    const loadData = async () => {
-      setLoading(true);
-      await fetchData();
-      setLoading(false);
-    };
+      if (tab === 'DASHBOARD') {
+          fetchStatus();
+      }
+  }, [tab]);
 
-    loadData();
-
-    // Refresh data every 5 seconds
-    const interval = setInterval(() => {
-      fetchData();
-    }, 5000);
-
-    return () => clearInterval(interval);
-  }, []);
-
-  const getStatusColor = (
-    value: number,
-    thresholds: {low: number; high: number},
-  ) => {
-    if (value < thresholds.low) return '#4CAF50'; // Green
-    if (value < thresholds.high) return '#FFC107'; // Yellow
-    return '#F44336'; // Red
-  };
-
-  if (loading) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="light-content" backgroundColor="#667eea" />
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#667eea" />
-          <Text style={styles.loadingText}>Loading Smart Window System...</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
+  // --- INTERFACE GRAPHIQUE ---
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#667eea" />
-      <ScrollView
-        contentContainerStyle={styles.scrollView}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }>
-        {/* Header */}
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>🪟 Smart Window Control</Text>
-          <Text style={styles.headerSubtitle}>
-            Real-time Weather Monitoring
-          </Text>
+      
+      {/* HEADER */}
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>🪟 Smart Window</Text>
+        <View style={styles.tabs}>
+            <TouchableOpacity onPress={() => setTab('SETUP')} style={[styles.tab, tab==='SETUP' && styles.activeTab]}>
+                <Text style={styles.tabText}>📡 1. Configuration</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setTab('DASHBOARD')} style={[styles.tab, tab==='DASHBOARD' && styles.activeTab]}>
+                <Text style={styles.tabText}>📊 2. Dashboard</Text>
+            </TouchableOpacity>
         </View>
+      </View>
 
-        {/* Error Banner */}
-        {error && (
-          <View style={styles.errorBanner}>
-            <Text style={styles.errorText}>⚠️ {error}</Text>
-          </View>
+      <ScrollView contentContainerStyle={styles.content}>
+        
+        {/* --- ONGLET 1 : CONFIGURATION (BLE) --- */}
+        {tab === 'SETUP' && (
+            <View style={styles.card}>
+                <Text style={styles.sectionTitle}>Configuration WiFi & Localisation</Text>
+                <Text style={styles.subText}>Renseignez vos identifiants WiFi pour que l'ESP32 puisse se connecter à Internet.</Text>
+                
+                <Text style={styles.label}>Nom du WiFi (SSID)</Text>
+                <TextInput 
+                    style={styles.input} 
+                    value={ssid} 
+                    onChangeText={setSsid} 
+                    placeholder="Ex: Livebox-1234"
+                    autoCapitalize="none"
+                />
+                
+                <Text style={styles.label}>Mot de passe WiFi</Text>
+                <TextInput 
+                    style={styles.input} 
+                    value={password} 
+                    onChangeText={setPassword} 
+                    secureTextEntry 
+                    placeholder="******"
+                />
+
+                <View style={{flexDirection:'row', gap:10}}>
+                    <View style={{flex:1}}>
+                        <Text style={styles.label}>Latitude</Text>
+                        <TextInput style={styles.input} value={lat} onChangeText={setLat} keyboardType="numeric"/>
+                    </View>
+                    <View style={{flex:1}}>
+                        <Text style={styles.label}>Longitude</Text>
+                        <TextInput style={styles.input} value={lon} onChangeText={setLon} keyboardType="numeric"/>
+                    </View>
+                </View>
+
+                <View style={styles.statusBox}>
+                    <Text style={{fontWeight:'bold', color: '#333'}}>État : {bleStatus}</Text>
+                    {scanning && <ActivityIndicator color="#667eea" />}
+                </View>
+
+                <TouchableOpacity 
+                    style={[styles.btnAction, scanning && {opacity: 0.7}]} 
+                    onPress={scanAndConfigure}
+                    disabled={scanning}
+                >
+                    <Text style={styles.btnText}>{scanning ? 'Recherche en cours...' : '📲 ENVOYER A L\'ESP32'}</Text>
+                </TouchableOpacity>
+            </View>
         )}
 
-        {/* Window Status Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Window Status</Text>
-          <View
-            style={[
-              styles.windowDisplay,
-              windowState?.isOpen ? styles.windowOpen : styles.windowClosed,
-            ]}>
-            <Text style={styles.windowIcon}>
-              {windowState?.isOpen ? '🪟' : '🚪'}
-            </Text>
-            <View style={styles.windowInfo}>
-              <Text style={styles.windowStatusText}>
-                {windowState?.isOpen ? 'OPEN' : 'CLOSED'}
-              </Text>
-              <Text style={styles.timestamp}>
-                Last updated:{' '}
-                {windowState?.lastUpdated
-                  ? new Date(windowState.lastUpdated).toLocaleTimeString()
-                  : 'N/A'}
-              </Text>
+        {/* --- ONGLET 2 : DASHBOARD (HTTP) --- */}
+        {tab === 'DASHBOARD' && (
+            <View>
+                <View style={[styles.card, {alignItems:'center'}]}>
+                    <Text style={styles.sectionTitle}>État actuel</Text>
+                    
+                    {/* Icône Géante */}
+                    <Text style={{fontSize: 80, marginVertical: 20}}>
+                        {windowState?.isOpen ? '🪟' : '🚪'}
+                    </Text>
+                    
+                    {/* Texte État */}
+                    <Text style={[styles.statusText, {color: windowState?.isOpen ? 'green' : '#d63031'}]}>
+                        {windowState?.isOpen ? 'OUVERTE' : 'FERMÉE'}
+                    </Text>
+
+                    {/* Données Météo reçues du Backend */}
+                    <View style={styles.infoRow}>
+                        <View style={styles.infoItem}>
+                            <Text style={styles.infoLabel}>🌡️ Temp</Text>
+                            <Text style={styles.infoValue}>{windowState?.temp ? windowState.temp + '°C' : '--'}</Text>
+                        </View>
+                        <View style={styles.infoItem}>
+                            <Text style={styles.infoLabel}>🏭 Pollution</Text>
+                            <Text style={styles.infoValue}>{windowState?.aqi ? 'AQI ' + windowState.aqi : '--'}</Text>
+                        </View>
+                    </View>
+
+                    <TouchableOpacity style={styles.btnRefresh} onPress={fetchStatus}>
+                        <Text style={styles.btnText}>Actualiser</Text>
+                    </TouchableOpacity>
+                </View>
+
+                <View style={styles.card}>
+                    <Text style={styles.sectionTitle}>Dernière synchronisation</Text>
+                    <Text style={{color:'#555'}}>
+                        {windowState?.lastUpdated ? new Date(windowState.lastUpdated).toLocaleTimeString() : 'Jamais'}
+                    </Text>
+                    <Text style={{color:'#888', marginTop:10, fontStyle:'italic', fontSize: 12}}>
+                        Le système se met à jour automatiquement toutes les 30 secondes via l'ESP32.
+                    </Text>
+                </View>
             </View>
-          </View>
+        )}
 
-          {/* Auto Mode Toggle */}
-          <View style={styles.autoModeContainer}>
-            <Text style={styles.autoModeLabel}>Auto Mode</Text>
-            <Switch
-              value={windowState?.autoMode || false}
-              onValueChange={toggleAutoMode}
-              trackColor={{false: '#767577', true: '#81b0ff'}}
-              thumbColor={windowState?.autoMode ? '#667eea' : '#f4f3f4'}
-            />
-          </View>
-
-          {/* Control Buttons */}
-          <View style={styles.controlButtons}>
-            <TouchableOpacity
-              style={[
-                styles.button,
-                styles.buttonOpen,
-                windowState?.autoMode && styles.buttonDisabled,
-              ]}
-              onPress={() => controlWindow('open')}
-              disabled={windowState?.autoMode}>
-              <Text style={styles.buttonText}>Open Window</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.button,
-                styles.buttonClose,
-                windowState?.autoMode && styles.buttonDisabled,
-              ]}
-              onPress={() => controlWindow('close')}
-              disabled={windowState?.autoMode}>
-              <Text style={styles.buttonText}>Close Window</Text>
-            </TouchableOpacity>
-          </View>
-
-          {windowState?.autoMode && (
-            <Text style={styles.autoModeNotice}>
-              ℹ️ Window is in auto mode. Disable to manually control.
-            </Text>
-          )}
-        </View>
-
-        {/* Weather Conditions Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Weather Conditions</Text>
-
-          {/* Weather Cards */}
-          <View style={styles.weatherGrid}>
-            {/* Air Pollution */}
-            <View style={styles.weatherCard}>
-              <Text style={styles.weatherIcon}>🏭</Text>
-              <Text style={styles.weatherCardTitle}>Air Pollution</Text>
-              <Text
-                style={[
-                  styles.weatherValue,
-                  {
-                    color: getStatusColor(weatherData?.pollution.value || 0, {
-                      low: 50,
-                      high: 70,
-                    }),
-                  },
-                ]}>
-                {weatherData?.pollution.value} {weatherData?.pollution.unit}
-              </Text>
-              <Text style={styles.weatherStatus}>
-                {weatherData?.pollution.status}
-              </Text>
-            </View>
-
-            {/* Sunlight */}
-            <View style={styles.weatherCard}>
-              <Text style={styles.weatherIcon}>☀️</Text>
-              <Text style={styles.weatherCardTitle}>Sunlight</Text>
-              <Text
-                style={[
-                  styles.weatherValue,
-                  {
-                    color: getStatusColor(
-                      100 - (weatherData?.sunlight.value || 0),
-                      {low: 50, high: 70},
-                    ),
-                  },
-                ]}>
-                {weatherData?.sunlight.value} {weatherData?.sunlight.unit}
-              </Text>
-              <Text style={styles.weatherStatus}>
-                {weatherData?.sunlight.intensity} Intensity
-              </Text>
-            </View>
-
-            {/* Wind Speed */}
-            <View style={styles.weatherCard}>
-              <Text style={styles.weatherIcon}>💨</Text>
-              <Text style={styles.weatherCardTitle}>Wind Speed</Text>
-              <Text
-                style={[
-                  styles.weatherValue,
-                  {
-                    color: getStatusColor(weatherData?.windSpeed.value || 0, {
-                      low: 20,
-                      high: 40,
-                    }),
-                  },
-                ]}>
-                {weatherData?.windSpeed.value} {weatherData?.windSpeed.unit}
-              </Text>
-              <Text style={styles.weatherStatus}>
-                {weatherData?.windSpeed.status}
-              </Text>
-            </View>
-
-            {/* Temperature */}
-            <View style={styles.weatherCard}>
-              <Text style={styles.weatherIcon}>🌡️</Text>
-              <Text style={styles.weatherCardTitle}>Temperature</Text>
-              <Text style={styles.weatherValue}>
-                {weatherData?.temperature.value} {weatherData?.temperature.unit}
-              </Text>
-              <Text style={styles.weatherStatus}>Current</Text>
-            </View>
-          </View>
-
-          <Text style={styles.dataTimestamp}>
-            Data updated:{' '}
-            {weatherData?.timestamp
-              ? new Date(weatherData.timestamp).toLocaleString()
-              : 'N/A'}
-          </Text>
-        </View>
-
-        {/* Footer */}
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>
-            Smart Window System - Powered by Real-time Weather Data
-          </Text>
-        </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#f5f5f5',
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#667eea',
-  },
-  scrollView: {
-    flexGrow: 1,
-  },
-  header: {
-    backgroundColor: '#667eea',
-    padding: 24,
-    alignItems: 'center',
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: 'white',
-  },
-  headerSubtitle: {
-    fontSize: 14,
-    color: 'white',
-    marginTop: 4,
-    opacity: 0.9,
-  },
-  errorBanner: {
-    backgroundColor: '#f44336',
-    padding: 12,
-    alignItems: 'center',
-  },
-  errorText: {
-    color: 'white',
-    fontWeight: 'bold',
-  },
-  section: {
-    backgroundColor: 'white',
-    margin: 16,
-    padding: 16,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 16,
-  },
-  windowDisplay: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 20,
-    borderRadius: 8,
-    marginBottom: 16,
-  },
-  windowOpen: {
-    backgroundColor: '#56ab2f',
-  },
-  windowClosed: {
-    backgroundColor: '#f5576c',
-  },
-  windowIcon: {
-    fontSize: 60,
-    marginRight: 16,
-  },
-  windowInfo: {
-    flex: 1,
-  },
-  windowStatusText: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: 'white',
-  },
-  timestamp: {
-    fontSize: 12,
-    color: 'rgba(255, 255, 255, 0.9)',
-    marginTop: 4,
-  },
-  autoModeContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    backgroundColor: '#f5f5f5',
-    borderRadius: 8,
-    marginBottom: 16,
-  },
-  autoModeLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-  },
-  controlButtons: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 12,
-  },
-  button: {
-    flex: 1,
-    padding: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  buttonOpen: {
-    backgroundColor: '#56ab2f',
-  },
-  buttonClose: {
-    backgroundColor: '#f5576c',
-  },
-  buttonDisabled: {
-    opacity: 0.5,
-  },
-  buttonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  autoModeNotice: {
-    textAlign: 'center',
-    color: '#666',
-    fontStyle: 'italic',
-    fontSize: 12,
-  },
-  weatherGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    marginBottom: 16,
-  },
-  weatherCard: {
-    flex: 1,
-    minWidth: '45%',
-    backgroundColor: '#667eea',
-    borderRadius: 8,
-    padding: 16,
-    alignItems: 'center',
-  },
-  weatherIcon: {
-    fontSize: 40,
-    marginBottom: 8,
-  },
-  weatherCardTitle: {
-    fontSize: 14,
-    color: 'white',
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  weatherValue: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: 'white',
-    marginBottom: 4,
-  },
-  weatherStatus: {
-    fontSize: 12,
-    color: 'rgba(255, 255, 255, 0.9)',
-  },
-  dataTimestamp: {
-    textAlign: 'center',
-    color: '#666',
-    fontSize: 12,
-    fontStyle: 'italic',
-  },
-  footer: {
-    padding: 24,
-    alignItems: 'center',
-  },
-  footerText: {
-    color: '#666',
-    fontSize: 12,
-  },
+  container: { flex: 1, backgroundColor: '#f0f2f5' },
+  header: { backgroundColor: '#667eea', paddingTop: 20, paddingBottom: 0, alignItems: 'center', elevation: 4 },
+  headerTitle: { color: 'white', fontSize: 22, fontWeight: 'bold', marginBottom: 15 },
+  tabs: { flexDirection: 'row', width: '100%' },
+  tab: { flex: 1, padding: 15, alignItems: 'center', borderBottomWidth: 4, borderBottomColor: 'transparent' },
+  activeTab: { borderBottomColor: 'white' },
+  tabText: { color: 'white', fontWeight: 'bold', fontSize: 14 },
+  content: { padding: 20 },
+  card: { backgroundColor: 'white', padding: 20, borderRadius: 12, marginBottom: 20, elevation: 2, shadowColor: '#000', shadowOffset:{width:0, height:2}, shadowOpacity:0.1, shadowRadius:4 },
+  sectionTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 10, color: '#333' },
+  subText: { color: '#666', marginBottom: 20, fontSize: 13 },
+  label: { fontWeight: '600', marginBottom: 5, color: '#444' },
+  input: { borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 12, marginBottom: 15, fontSize: 16, backgroundColor: '#fafafa', color: '#333' },
+  statusBox: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, padding: 12, backgroundColor: '#eef', borderRadius: 8, borderWidth: 1, borderColor: '#dde' },
+  btnAction: { backgroundColor: '#667eea', padding: 15, borderRadius: 8, alignItems: 'center' },
+  btnRefresh: { backgroundColor: '#333', padding: 12, borderRadius: 8, alignItems: 'center', marginTop: 20, width:'100%' },
+  btnText: { color: 'white', fontWeight: 'bold', fontSize: 16 },
+  statusText: { fontSize: 28, fontWeight: 'bold', marginBottom: 20 },
+  infoRow: { flexDirection: 'row', width: '100%', justifyContent: 'space-around', marginVertical: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#eee' },
+  infoItem: { alignItems: 'center' },
+  infoLabel: { fontSize: 14, color: '#666', marginBottom: 4 },
+  infoValue: { fontSize: 18, fontWeight: 'bold', color: '#333' }
 });
 
 export default App;
