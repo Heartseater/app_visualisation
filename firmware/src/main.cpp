@@ -3,100 +3,128 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <ESP32Servo.h>
+#include <NimBLEDevice.h>
+#include <Preferences.h>
 
-// --- 1. TES IDENTIFIANTS WIFI (À REMPLIR) ---
-const char* SSID = "tpiot";
-const char* PASSWORD = "tpiot697";
+#define SERVO_PIN 13 
+Servo windowServo;
+Preferences preferences;
 
-// --- 2. TA POSITION (Pour la météo) ---
-float lat = 45.18; // Latitude (ex: Grenoble)
-float lon = 5.72;  // Longitude
+// UUIDs BLE
+#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHAR_CONFIG_UUID    "beb5483e-36e1-4688-b7f5-ea07361b26a8" 
 
-// --- 3. REGLAGES SERVO & SEUILS ---
-#define SERVO_PIN 13       // Pin où est branché le fil orange/jaune du servo
-Servo myservo;
+String wifi_ssid = "tpiot";
+String wifi_pass = "tpiot697";
+float latitude = 45.18;
+float longitude = 5.72;
+bool isOpen = false;
 
-// Change ces valeurs pour forcer le test !
-// Si il fait 20°C chez toi, mets 15.0 pour tester la fermeture.
-const float SEUIL_TEMP = 30.0; 
-const int SEUIL_POLLUTION = 50; 
-
-void setup() {
-  Serial.begin(115200);
-  
-  // Attachement du servo
-  // (Min 500us, Max 2400us sont des valeurs standards pour ESP32)
-  myservo.setPeriodHertz(50); 
-  myservo.attach(SERVO_PIN, 500, 2400);
-  
-  Serial.println("\n--- DÉBUT DU TEST ESP32 ---");
-  
-  // Connexion WiFi
-  WiFi.begin(SSID, PASSWORD);
-  Serial.print("Connexion au WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("\n✅ WiFi Connecté !");
-  Serial.print("Adresse IP : ");
-  Serial.println(WiFi.localIP());
+void setWindow(bool open) {
+    if (isOpen == open) return;
+    if (open) {
+        windowServo.write(90); 
+    } else {
+        windowServo.write(0);
+    }
+    isOpen = open;
 }
 
-void loop() {
-  if (WiFi.status() == WL_CONNECTED) {
-    HTTPClient http;
-    
-    // Construction de l'URL API
-    String url = "https://api.open-meteo.com/v1/forecast?latitude=" + String(lat) + 
-                 "&longitude=" + String(lon) + 
-                 "&current=temperature_2m,european_aqi";
+class ConfigCallbacks: public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *pCharacteristic) {
+      std::string value = pCharacteristic->getValue();
+      if (value.length() > 0) {
+        String data = String(value.c_str());
+        // Format: "SSID;PASS;LAT;LON"
+        int s1 = data.indexOf(';');
+        int s2 = data.indexOf(';', s1 + 1);
+        int s3 = data.indexOf(';', s2 + 1);
+        
+        if(s3 > 0) {
+            wifi_ssid = data.substring(0, s1);
+            wifi_pass = data.substring(s1 + 1, s2);
+            latitude = data.substring(s2 + 1, s3).toFloat();
+            longitude = data.substring(s3 + 1).toFloat();
+            
+            preferences.begin("config", false);
+            preferences.putString("ssid", wifi_ssid);
+            preferences.putString("pass", wifi_pass);
+            preferences.putFloat("lat", latitude);
+            preferences.putFloat("lon", longitude);
+            preferences.end();
+            ESP.restart();
+        }
+      }
+    }
+};
 
-    Serial.println("\n🔍 Appel API Météo...");
-    http.begin(url);
+void checkWeatherAndAct() {
+    if(WiFi.status() != WL_CONNECTED) return;
+    HTTPClient http;
+    // Météo API
+    http.begin("https://api.open-meteo.com/v1/forecast?latitude=" + String(latitude) + "&longitude=" + String(longitude) + "&current=temperature_2m,european_aqi");
     int httpCode = http.GET();
 
     if (httpCode > 0) {
-      String payload = http.getString();
-      
-      // Parsing du JSON
-      JsonDocument doc;
-      DeserializationError error = deserializeJson(doc, payload);
-
-      if (!error) {
-        float temp = doc["current"]["temperature_2m"];
-        int aqi = doc["current"]["european_aqi"];
+        String payload = http.getString();
+        JsonDocument doc;
+        deserializeJson(doc, payload);
         
-        // Si l'AQI est null (pas de capteur dans la zone), on met 0 par sécurité
-        if (doc["current"]["european_aqi"].isNull()) aqi = 0;
+        float currentTemp = doc["current"]["temperature_2m"];
+        int currentAQI = doc["current"]["european_aqi"];
+        if (doc["current"]["european_aqi"].isNull()) currentAQI = 20;
 
-        Serial.println("-----------------------------");
-        Serial.print("🌡️ Température actuelle : "); Serial.print(temp); Serial.println(" °C");
-        Serial.print("🏭 Pollution (AQI)     : "); Serial.println(aqi);
-        Serial.println("-----------------------------");
-
-        // Logique de contrôle
-        if (temp > SEUIL_TEMP || aqi > SEUIL_POLLUTION) {
-          Serial.println("⚠️ Conditions MAUVAISES -> FERMETURE du volet (0°)");
-          myservo.write(0); 
-        } else {
-          Serial.println("☀️ Conditions BONNES    -> OUVERTURE du volet (90°)");
-          myservo.write(90);
-        }
-      } else {
-        Serial.print("❌ Erreur de lecture JSON : ");
-        Serial.println(error.c_str());
-      }
-    } else {
-      Serial.print("❌ Erreur HTTP : ");
-      Serial.println(httpCode);
+        // Logique Moteur (> 30°C ou Pollution > 50)
+        if (currentTemp > 30.0 || currentAQI > 50) setWindow(false);
+        else setWindow(true);
+        
+        // --- C'EST ICI QU'IL FAUT METTRE TON IP ---
+        HTTPClient httpLog;
+        httpLog.begin("http://10.55.71.14:3001/api/window/log"); 
+        httpLog.addHeader("Content-Type", "application/json");
+        String jsonStr;
+        JsonDocument logDoc;
+        logDoc["temp"] = currentTemp;
+        logDoc["aqi"] = currentAQI;
+        logDoc["isOpen"] = isOpen;
+        serializeJson(logDoc, jsonStr);
+        httpLog.POST(jsonStr);
+        httpLog.end();
     }
     http.end();
-  } else {
-    Serial.println("❌ WiFi perdu !");
-  }
+}
 
-  // Attendre 10 secondes avant la prochaine vérif
-  Serial.println("Attente 10s...");
-  delay(10000);
+void setup() {
+    Serial.begin(115200);
+    windowServo.setPeriodHertz(50);
+    windowServo.attach(SERVO_PIN, 500, 2400); 
+
+    preferences.begin("config", true);
+    wifi_ssid = preferences.getString("ssid", "");
+    wifi_pass = preferences.getString("pass", "");
+    latitude = preferences.getFloat("lat", 45.18);
+    longitude = preferences.getFloat("lon", 5.72);
+    preferences.end();
+
+    // Init BLE
+    BLEDevice::init("ESP32_SmartWindow");
+    BLEServer *pServer = BLEDevice::createServer();
+    BLEService *pService = pServer->createService(SERVICE_UUID);
+    BLECharacteristic *pChar = pService->createCharacteristic(CHAR_CONFIG_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
+    pChar->setCallbacks(new ConfigCallbacks());
+    pService->start();
+    BLEDevice::getAdvertising()->addServiceUUID(SERVICE_UUID);
+    BLEDevice::getAdvertising()->start();
+
+    if(wifi_ssid != "") WiFi.begin(wifi_ssid.c_str(), wifi_pass.c_str());
+}
+
+void loop() {
+    static unsigned long lastCheck = 0;
+    // Vérifie toutes les 30 secondes
+    if (millis() - lastCheck > 30000) { 
+        checkWeatherAndAct();
+        lastCheck = millis();
+    }
+    delay(100);
 }
