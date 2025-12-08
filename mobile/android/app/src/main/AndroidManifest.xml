@@ -17,8 +17,7 @@ import { BleManager, Device } from 'react-native-ble-plx';
 import { encode } from 'base-64';
 
 // --- CONFIGURATION ---
-// Mets l'IP de ton PC ici (pas localhost !)
-const API_URL = 'http://192.168.1.XX:3001'; 
+const API_URL = 'http://http://10.55.71.14:3001'; 
 
 // UUIDs de l'ESP32 (doivent correspondre au C++)
 const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
