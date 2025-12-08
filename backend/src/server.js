@@ -37,21 +37,30 @@ app.post('/api/window/log', (req, res) => {
 });
 
 // 2. L'App Mobile envoie un ordre manuel (Ouvrir/Fermer/Auto)
+// 2. L'App Mobile envoie un ordre manuel
 app.post('/api/window/control', (req, res) => {
     const { action, autoMode } = req.body;
 
     if (autoMode === true) {
         currentCommand = 'AUTO';
         console.log("📲 App : Passage en mode AUTO");
-    } else if (action === 'open') {
+    } 
+    else if (autoMode === false) {
+        // Si on désactive le mode Auto, on fige l'état actuel (MANUAL)
+        // Si la fenêtre est ouverte, on la force OUVERTE. Si fermée, FERMÉE.
+        currentCommand = windowState.isOpen ? 'OPEN' : 'CLOSE';
+        console.log("📲 App : Passage en mode MANUEL");
+    }
+    else if (action === 'open') {
         currentCommand = 'OPEN';
         console.log("📲 App : Force OUVERTURE");
-    } else if (action === 'close') {
+    } 
+    else if (action === 'close') {
         currentCommand = 'CLOSE';
         console.log("📲 App : Force FERMETURE");
     }
 
-    // On renvoie le nouvel état à l'appli pour qu'elle mette à jour ses boutons
+    // On renvoie le nouvel état
     res.json({ 
         success: true, 
         state: { ...windowState, autoMode: (currentCommand === 'AUTO') } 
