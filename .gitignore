@@ -48,6 +48,7 @@ temp/
 mobile/.gradle/
 mobile/local.properties
 mobile/.bundle/
+mobile/config.json
 
 # Package lock files (keep package.json but exclude lock files from PR)
 package-lock.json

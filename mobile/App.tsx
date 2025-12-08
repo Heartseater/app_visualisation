@@ -48,8 +48,8 @@ interface WindowState {
   autoMode: boolean;
 }
 
-// Update this URL to your backend server IP when testing on a physical device
-const API_URL = 'http://localhost:3001';
+// API base URL configured via src/config.ts (handles emulator vs device)
+import {API_URL} from './src/config';
 
 function App(): React.JSX.Element {
   const [weatherData, setWeatherData] = useState<WeatherData | null>(null);
