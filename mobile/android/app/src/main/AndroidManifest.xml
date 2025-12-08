@@ -1,27 +1,220 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+import React, { useState, useEffect } from 'react';
+import {
+  SafeAreaView,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  View,
+  TouchableOpacity,
+  TextInput,
+  Alert,
+  PermissionsAndroid,
+  Platform,
+  ActivityIndicator
+} from 'react-native';
+import { BleManager, Device } from 'react-native-ble-plx';
+import { encode } from 'base-64';
 
-    <uses-permission android:name="android.permission.INTERNET" />
+// --- CONFIGURATION ---
+// Mets l'IP de ton PC ici (pas localhost !)
+const API_URL = 'http://192.168.1.XX:3001'; 
 
-    <application
-      android:name=".MainApplication"
-      android:label="@string/app_name"
-      android:icon="@mipmap/ic_launcher"
-      android:roundIcon="@mipmap/ic_launcher_round"
-      android:allowBackup="false"
-      android:theme="@style/AppTheme"
-      android:usesCleartextTraffic="${usesCleartextTraffic}"
-      android:supportsRtl="true">
-      <activity
-        android:name=".MainActivity"
-        android:label="@string/app_name"
-        android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
-        android:launchMode="singleTask"
-        android:windowSoftInputMode="adjustResize"
-        android:exported="true">
-        <intent-filter>
-            <action android:name="android.intent.action.MAIN" />
-            <category android:name="android.intent.category.LAUNCHER" />
-        </intent-filter>
-      </activity>
-    </application>
-</manifest>
+// UUIDs de l'ESP32 (doivent correspondre au C++)
+const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+const CHAR_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+
+const bleManager = new BleManager();
+
+function App(): React.JSX.Element {
+  // --- ETATS ---
+  const [tab, setTab] = useState<'SETUP' | 'DASHBOARD'>('SETUP');
+  
+  // Setup BLE
+  const [ssid, setSsid] = useState('');
+  const [password, setPassword] = useState('');
+  const [lat, setLat] = useState('45.188');
+  const [lon, setLon] = useState('5.724');
+  const [bleStatus, setBleStatus] = useState('En attente...');
+  const [scanning, setScanning] = useState(false);
+
+  // Dashboard Data
+  const [windowState, setWindowState] = useState<any>(null);
+
+  // --- LOGIQUE BLE ---
+  const requestPermissions = async () => {
+    if (Platform.OS === 'android') {
+      await PermissionsAndroid.requestMultiple([
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+      ]);
+    }
+  };
+
+  useEffect(() => { requestPermissions(); }, []);
+
+  const scanAndConfigure = () => {
+    if (scanning) return;
+    setScanning(true);
+    setBleStatus('Recherche ESP32...');
+
+    bleManager.startDeviceScan(null, null, (error, device) => {
+      if (error) {
+        setBleStatus('Erreur Scan: ' + error.message);
+        setScanning(false);
+        return;
+      }
+
+      if (device && device.name === 'ESP32_SmartWindow') {
+        bleManager.stopDeviceScan();
+        setBleStatus('ESP32 Trouvé ! Connexion...');
+        
+        device.connect()
+          .then((d) => d.discoverAllServicesAndCharacteristics())
+          .then((d) => {
+            setBleStatus('Envoi de la config...');
+            const configStr = `${ssid};${password};${lat};${lon}`;
+            const base64Data = encode(configStr);
+            return d.writeCharacteristicWithResponseForService(SERVICE_UUID, CHAR_UUID, base64Data);
+          })
+          .then(() => {
+            setBleStatus('Config envoyée ! ✅');
+            Alert.alert("Succès", "L'ESP32 a reçu le WiFi et va redémarrer.");
+            setScanning(false);
+          })
+          .catch((e) => {
+            setBleStatus('Erreur: ' + e.message);
+            setScanning(false);
+          });
+      }
+    });
+
+    // Timeout de 10s pour le scan
+    setTimeout(() => {
+        if(scanning) {
+            bleManager.stopDeviceScan();
+            setScanning(false);
+            setBleStatus('Aucun ESP32 trouvé (Timeout)');
+        }
+    }, 10000);
+  };
+
+  // --- LOGIQUE DASHBOARD ---
+  const fetchStatus = async () => {
+    try {
+        const res = await fetch(`${API_URL}/api/window/status`);
+        const data = await res.json();
+        setWindowState(data);
+    } catch (e) {
+        console.log(e);
+    }
+  };
+
+  // --- UI ---
+  return (
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor="#667eea" />
+      
+      {/* HEADER */}
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>🪟 Smart Window</Text>
+        <View style={styles.tabs}>
+            <TouchableOpacity onPress={() => setTab('SETUP')} style={[styles.tab, tab==='SETUP' && styles.activeTab]}>
+                <Text style={styles.tabText}>📡 Setup ESP32</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => {setTab('DASHBOARD'); fetchStatus();}} style={[styles.tab, tab==='DASHBOARD' && styles.activeTab]}>
+                <Text style={styles.tabText}>📊 Dashboard</Text>
+            </TouchableOpacity>
+        </View>
+      </View>
+
+      <ScrollView contentContainerStyle={styles.content}>
+        
+        {/* TAB 1: SETUP WIFI/BLE */}
+        {tab === 'SETUP' && (
+            <View style={styles.card}>
+                <Text style={styles.sectionTitle}>Configuration WiFi</Text>
+                <Text style={styles.subText}>Connectez l'ESP32 à votre box internet</Text>
+                
+                <Text style={styles.label}>Nom du WiFi (SSID)</Text>
+                <TextInput style={styles.input} value={ssid} onChangeText={setSsid} placeholder="Ex: Livebox-1234"/>
+                
+                <Text style={styles.label}>Mot de passe</Text>
+                <TextInput style={styles.input} value={password} onChangeText={setPassword} secureTextEntry placeholder="******"/>
+
+                <View style={{flexDirection:'row', gap:10}}>
+                    <View style={{flex:1}}>
+                        <Text style={styles.label}>Lat</Text>
+                        <TextInput style={styles.input} value={lat} onChangeText={setLat} keyboardType="numeric"/>
+                    </View>
+                    <View style={{flex:1}}>
+                        <Text style={styles.label}>Lon</Text>
+                        <TextInput style={styles.input} value={lon} onChangeText={setLon} keyboardType="numeric"/>
+                    </View>
+                </View>
+
+                <View style={styles.statusBox}>
+                    <Text style={{fontWeight:'bold'}}>État : {bleStatus}</Text>
+                    {scanning && <ActivityIndicator color="blue" />}
+                </View>
+
+                <TouchableOpacity style={styles.btnAction} onPress={scanAndConfigure}>
+                    <Text style={styles.btnText}>📲 ENVOYER A L'ESP32</Text>
+                </TouchableOpacity>
+            </View>
+        )}
+
+        {/* TAB 2: DASHBOARD */}
+        {tab === 'DASHBOARD' && (
+            <View>
+                <View style={[styles.card, {alignItems:'center'}]}>
+                    <Text style={styles.sectionTitle}>État de la Fenêtre</Text>
+                    <Text style={{fontSize: 60, marginVertical: 20}}>
+                        {windowState?.isOpen ? '🪟' : '🚪'}
+                    </Text>
+                    <Text style={[styles.statusText, {color: windowState?.isOpen ? 'green' : 'red'}]}>
+                        {windowState?.isOpen ? 'OUVERTE' : 'FERMÉE'}
+                    </Text>
+                    <TouchableOpacity style={styles.btnRefresh} onPress={fetchStatus}>
+                        <Text style={styles.btnText}>Actualiser</Text>
+                    </TouchableOpacity>
+                </View>
+
+                <View style={styles.card}>
+                    <Text style={styles.sectionTitle}>Dernière Info Reçue</Text>
+                    <Text>Dernière MAJ : {windowState?.lastUpdated ? new Date(windowState.lastUpdated).toLocaleTimeString() : '--:--'}</Text>
+                    <Text style={{color:'grey', marginTop:10, fontStyle:'italic'}}>
+                        Note : Les données météo sont maintenant gérées directement par la carte ESP32.
+                    </Text>
+                </View>
+            </View>
+        )}
+
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#f0f2f5' },
+  header: { backgroundColor: '#667eea', paddingTop: 20, paddingBottom: 10, alignItems: 'center' },
+  headerTitle: { color: 'white', fontSize: 22, fontWeight: 'bold', marginBottom: 15 },
+  tabs: { flexDirection: 'row', width: '100%' },
+  tab: { flex: 1, padding: 10, alignItems: 'center', borderBottomWidth: 3, borderBottomColor: 'transparent' },
+  activeTab: { borderBottomColor: 'white' },
+  tabText: { color: 'white', fontWeight: 'bold' },
+  content: { padding: 20 },
+  card: { backgroundColor: 'white', padding: 20, borderRadius: 12, marginBottom: 20, elevation: 2 },
+  sectionTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 10, color: '#333' },
+  subText: { color: '#666', marginBottom: 20 },
+  label: { fontWeight: '600', marginBottom: 5, color: '#444' },
+  input: { borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 12, marginBottom: 15, fontSize: 16, backgroundColor: '#fafafa' },
+  statusBox: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 20, padding: 10, backgroundColor: '#eef', borderRadius: 8 },
+  btnAction: { backgroundColor: '#667eea', padding: 15, borderRadius: 8, alignItems: 'center' },
+  btnRefresh: { backgroundColor: '#333', padding: 10, borderRadius: 8, alignItems: 'center', marginTop: 10, width:'100%' },
+  btnText: { color: 'white', fontWeight: 'bold', fontSize: 16 },
+  statusText: { fontSize: 24, fontWeight: 'bold' }
+});
+
+export default App;
