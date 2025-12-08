@@ -36,31 +36,30 @@ app.post('/api/window/log', (req, res) => {
     });
 });
 
-// 2. L'App Mobile envoie un ordre manuel (Ouvrir/Fermer/Auto)
 // 2. L'App Mobile envoie un ordre manuel
 app.post('/api/window/control', (req, res) => {
     const { action, autoMode } = req.body;
 
-    if (autoMode === true) {
-        currentCommand = 'AUTO';
-        console.log("📲 App : Passage en mode AUTO");
-    } 
-    else if (autoMode === false) {
-        // Si on désactive le mode Auto, on fige l'état actuel (MANUAL)
-        // Si la fenêtre est ouverte, on la force OUVERTE. Si fermée, FERMÉE.
-        currentCommand = windowState.isOpen ? 'OPEN' : 'CLOSE';
-        console.log("📲 App : Passage en mode MANUEL");
-    }
-    else if (action === 'open') {
+    // PRIORITÉ 1 : Si une action explicite (Ouvrir/Fermer) est envoyée
+    if (action === 'open') {
         currentCommand = 'OPEN';
-        console.log("📲 App : Force OUVERTURE");
+        console.log("📲 App : Action -> Force OUVERTURE");
     } 
     else if (action === 'close') {
         currentCommand = 'CLOSE';
-        console.log("📲 App : Force FERMETURE");
+        console.log("📲 App : Action -> Force FERMETURE");
+    }
+    // PRIORITÉ 2 : Si pas d'action, on regarde le changement de mode
+    else if (autoMode === true) {
+        currentCommand = 'AUTO';
+        console.log("📲 App : Switch -> Mode AUTO");
+    } 
+    else if (autoMode === false) {
+        // On désactive juste le mode auto, on garde la position actuelle
+        currentCommand = windowState.isOpen ? 'OPEN' : 'CLOSE';
+        console.log("📲 App : Switch -> Mode MANUEL (Maintien position)");
     }
 
-    // On renvoie le nouvel état
     res.json({ 
         success: true, 
         state: { ...windowState, autoMode: (currentCommand === 'AUTO') } 
