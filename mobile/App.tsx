@@ -18,7 +18,7 @@ import {
 import { BleManager } from 'react-native-ble-plx';
 import { encode } from 'base-64';
 
-const API_URL = 'http://10.55.71.14:3001'; 
+const API_URL = 'http://10.166.120.14:3001'; 
 
 const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
 const CHAR_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
