@@ -25,14 +25,22 @@ float lastTemp = 0.0;
 int lastAQI = 0;
 unsigned long lastWeatherCheck = 0;
 
-void setWindow(bool open) {
-    if (isOpen == open) return;
-    if (open) {
-        windowServo.write(90); 
-    } else {
-        windowServo.write(0);
-    }
-    isOpen = open;
+// Variable globale pour éviter de spammer le servo s'il est déjà au bon angle
+int currentAngle = -1; 
+
+void setWindow(int angle) {
+    // Sécurité : on borne entre 0 et 90
+    if (angle < 0) angle = 0;
+    if (angle > 90) angle = 90;
+
+    if (currentAngle == angle) return; // On ne bouge pas si c'est déjà bon
+
+    windowServo.write(angle);
+    Serial.println(">>> MOTEUR : Angle " + String(angle) + "°");
+    currentAngle = angle;
+    
+    // On met à jour isOpen pour l'info (si > 0 on considère que c'est ouvert)
+    isOpen = (angle > 0);
 }
 
 // ... (Code BLE inchangé, je le condense pour la lisibilité)
@@ -85,7 +93,7 @@ void checkSystem() {
     logDoc["aqi"] = lastAQI;
     logDoc["isOpen"] = isOpen;
     serializeJson(logDoc, jsonStr);
-    
+
     int httpResponseCode = httpLog.POST(jsonStr);
 
     if (httpResponseCode > 0) {
@@ -93,22 +101,20 @@ void checkSystem() {
         JsonDocument resDoc;
         deserializeJson(resDoc, response);
         
-        // On lit l'ordre du serveur : "AUTO", "OPEN" ou "CLOSE"
         String command = resDoc["command"].as<String>();
-        
-        Serial.print("Météo: " + String(lastTemp) + "C | Ordre Serveur: " + command);
+        int targetAngle = resDoc["angle"];
 
-        if (command == "OPEN") {
-            Serial.println(" -> Force OUVERTURE");
-            setWindow(true);
-        } else if (command == "CLOSE") {
-             Serial.println(" -> Force FERMETURE");
-            setWindow(false);
+        Serial.print("Ordre: " + command + " | Angle: " + String(targetAngle));
+
+        if (command == "MANUAL") {
+            Serial.println(" -> Application MANUELLE");
+            setWindow(targetAngle);
         } else {
-            // Mode AUTO : On décide selon la météo stockée
             Serial.println(" -> Mode AUTO");
-            if (lastTemp > 30.0 || lastAQI > 50) setWindow(false);
-            else setWindow(true);
+            // En auto, on décide : soit 0 (fermé), soit 90 (ouvert en grand)
+            // Tu pourrais aussi mettre 45 en auto si tu veux !
+            if (lastTemp > 30.0 || lastAQI > 50) setWindow(0);
+            else setWindow(90);
         }
     }
     httpLog.end();
