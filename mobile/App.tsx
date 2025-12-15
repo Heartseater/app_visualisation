@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import Slider from '@react-native-community/slider';
 import {
   SafeAreaView,
   ScrollView,
@@ -104,6 +105,19 @@ function App(): React.JSX.Element {
     }
   };
 
+  const sendAngle = async (val: number) => {
+    // On arrondit pour éviter d'envoyer 45.333333
+    const angleInt = Math.round(val);
+    try {
+        await fetch(`http://${serverIp}:3001/api/window/control`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ angle: angleInt, autoMode: false }) // Désactive l'auto
+        });
+        // Pas de fetchStatus() ici pour éviter de faire laguer le slider
+    } catch (e) { console.log(e); }
+};
+  
   const sendCommand = async (action: 'open' | 'close') => {
       try {
           await fetch(`${API_URL}/api/window/control`, {
@@ -193,6 +207,24 @@ function App(): React.JSX.Element {
                                 </TouchableOpacity>
                             </View>
                         )}
+                      
+                      {/* --- SLIDER D'OUVERTURE --- */}
+{!windowState?.autoMode && (
+    <View style={{width: '100%', alignItems: 'center', marginVertical: 20}}>
+        <Text style={styles.label}>Ouverture : {windowState?.targetAngle ?? 0}°</Text>
+        <Slider
+            style={{width: '100%', height: 40}}
+            minimumValue={0}
+            maximumValue={90}
+            step={1} // Pas de 1 degré
+            value={windowState?.targetAngle ?? 0}
+            onSlidingComplete={sendAngle} // N'envoie qu'au relâchement du doigt (économise le réseau)
+            minimumTrackTintColor="#667eea"
+            maximumTrackTintColor="#000000"
+            thumbTintColor="#667eea"
+        />
+    </View>
+)}
                         
                         {windowState?.autoMode && (
                             <Text style={{fontStyle:'italic', color:'#888', marginTop:10}}>Désactivez le mode auto pour contrôler.</Text>
