@@ -1,7 +1,5 @@
 ## Mobile App (React Native - Bare)
 
-Cette application mobile remplace l’app web (`web/`). Elle réplique le dashboard et le contrôle du volet.
-
 ### Configuration de l’API (obligatoire pour un téléphone)
 
 L’URL d’API est gérée par `src/config.ts` :
@@ -26,17 +24,8 @@ Assurez‑vous que le backend écoute sur le port `3001` et est joignable depuis
 Prérequis: Android SDK/Studio, émulateur en marche ou appareil branché, Node ≥ 20.
 
 ```fish
-cd /home/canaguyv/Documents/Cours/3aa/objectconnecté/app_visualisation/mobile
+cd mobile
 npm start
-# Dans un autre terminal
+# Dans un autre terminal :
 npm run android
 ```
-
-### Endpoints utilisés
-- `GET /api/weather`
-- `GET /api/window/status`
-- `POST /api/window/control`  (body: `{ "action": "open"|"close" }` ou `{ "autoMode": boolean }`)
-
-### Notes
-- Si vous utilisez `localhost` sur un téléphone, les requêtes échoueront. Utilisez l’IP de votre PC dans `mobile/config.json`.
-- L’UI est similaire à l’app web précédente (cartes météo, statut volet, bascule auto, rafraîchissement périodique).

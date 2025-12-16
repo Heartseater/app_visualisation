@@ -7,7 +7,7 @@ const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
 const CHAR_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 
 export const useBLE = () => {
-  // On instancie le manager une seule fois grâce à useMemo
+  
   const bleManager = useMemo(() => new BleManager(), []);
   
   const [bleStatus, setBleStatus] = useState('En attente...');
@@ -22,25 +22,26 @@ export const useBLE = () => {
         PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
       ]);
     }
-    // Cleanup: destruction du manager quand le composant est démonté
+    
     return () => {
       bleManager.destroy();
     };
   }, [bleManager]);
 
+  // Scanner et configurer l'ESP32
   const scanAndConfigure = (
     ssid: string, 
     pass: string, 
     lat: string, 
     lon: string,
-    onSuccess: () => void // Callback pour dire à App.tsx que c'est fini
+    onSuccess: () => void
   ) => {
     if (isScanning) return;
     
     setIsScanning(true);
     setBleStatus('Recherche ESP32...');
 
-    // Timeout de sécurité (15s)
+    
     const scanTimeout = setTimeout(() => { 
         if (isScanning) { 
             bleManager.stopDeviceScan(); 
@@ -53,13 +54,13 @@ export const useBLE = () => {
       if (error) {
         setBleStatus('Erreur: ' + error.message);
         setIsScanning(false);
-        clearTimeout(scanTimeout); // On annule le timeout
+        clearTimeout(scanTimeout);
         return;
       }
 
       if (device && (device.name === 'ESP32_SmartWindow' || device.localName === 'ESP32_SmartWindow')) {
         bleManager.stopDeviceScan();
-        clearTimeout(scanTimeout); // On a trouvé, on annule le timeout
+        clearTimeout(scanTimeout);
         setBleStatus('Connexion...');
         
         device.connect()
@@ -74,7 +75,7 @@ export const useBLE = () => {
             setIsScanning(false);
             Alert.alert("Succès", "L'ESP32 redémarre...");
             
-            // On déclenche l'action de succès (changement de tab) après un court délai
+            
             setTimeout(() => {
                 onSuccess();
             }, 1000);

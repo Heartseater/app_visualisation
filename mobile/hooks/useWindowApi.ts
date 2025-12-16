@@ -19,7 +19,7 @@ export const useWindowApi = () => {
     try {
       const res = await fetch(`${API_URL}/api/window/status`);
       const data = await res.json();
-      // Le GET retourne directement l'objet d'état
+      
       setWindowState(data);
     } catch (e) {
       console.log("Erreur API fetchStatus", e);
@@ -37,11 +37,9 @@ export const useWindowApi = () => {
       
       const data = await res.json();
       
-      // CORRECTION ICI : On met à jour l'état local directement avec la réponse du serveur
       if (data.success && data.state) {
         setWindowState(data.state);
       } else {
-        // Fallback si la réponse n'est pas complète
         fetchStatus();
       }
       
@@ -60,7 +58,6 @@ export const useWindowApi = () => {
         body: JSON.stringify({ angle: angleInt, autoMode: false })
       });
       
-      // On met à jour aussi ici pour que le slider ne "saute" pas en arrière
       const data = await res.json();
       if (data.success && data.state) {
         setWindowState(data.state);

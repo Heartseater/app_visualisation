@@ -19,21 +19,19 @@ function App(): React.JSX.Element {
   // Navigation
   const [tab, setTab] = useState<'SETUP' | 'DASHBOARD'>('SETUP');
   
-  // Utilisation des Hooks "Métier"
+  // Utilisation des Hooks
   const { bleStatus, isScanning, scanAndConfigure } = useBLE();
   const { windowState, fetchStatus, sendCommand, sendAngle, toggleAutoMode } = useWindowApi();
 
-  // Effet de bord : Rafraîchir les données quand on arrive sur le Dashboard
+  // Rafraîchir les données quand on arrive sur le Dashboard
   useEffect(() => { 
     if (tab === 'DASHBOARD') {
         fetchStatus();
     }
   }, [tab, fetchStatus]);
 
-  // Fonction wrapper pour gérer la transition après succès du setup
   const handleConnect = (ssid: string, pass: string, lat: string, lon: string) => {
     scanAndConfigure(ssid, pass, lat, lon, () => {
-        // Callback de succès : on passe au dashboard et on rafraîchit
         setTab('DASHBOARD');
         fetchStatus();
     });
@@ -41,7 +39,7 @@ function App(): React.JSX.Element {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Status Bar aux couleurs ENSIMAG */}
+      
       <StatusBar barStyle="light-content" backgroundColor="#007A5E" />
       
       <TabHeader activeTab={tab} onTabChange={setTab} />
