@@ -109,7 +109,7 @@ function App(): React.JSX.Element {
     // On arrondit pour éviter d'envoyer 45.333333
     const angleInt = Math.round(val);
     try {
-        await fetch(`http://${serverIp}:3001/api/window/control`, {
+        await fetch(`http://10.166.120.14:3001/api/window/control`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ angle: angleInt, autoMode: false }) // Désactive l'auto
